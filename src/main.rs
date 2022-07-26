@@ -93,6 +93,8 @@ async fn main() {
         .build()
         .expect("failed to build client");
 
+    println!("Rust is Beautiful ❤️");
+
     loop {
         interval.tick().await;
 

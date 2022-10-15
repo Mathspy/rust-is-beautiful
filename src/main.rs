@@ -1,5 +1,6 @@
 use std::{fmt::Display, ops::ControlFlow};
 
+use anyhow::anyhow;
 use reqwest::{
     header::{HeaderName, HeaderValue},
     Response,
@@ -89,8 +90,7 @@ async fn attempt(
 
     match magic_number.cmp(&(issue.number + 1)) {
         std::cmp::Ordering::Less => {
-            println!("We didn't make it, I am sorry :<");
-            return ControlFlow::Break(Ok(()));
+            return ControlFlow::Break(Err(anyhow!("We didn't make it, I am sorry :<")));
         }
         std::cmp::Ordering::Equal => {}
         std::cmp::Ordering::Greater => {
@@ -101,17 +101,14 @@ async fn attempt(
     let posted_issue = if let Some(posted_issue) = send_request(client).await {
         posted_issue
     } else {
-        println!("We failed to post the issue, noooo");
-        return ControlFlow::Break(Ok(()));
+        return ControlFlow::Break(Err(anyhow!("We failed to post the issue, noooo")));
     };
 
     if posted_issue.number == magic_number {
-        println!("We did it!");
+        ControlFlow::Break(Ok(()))
     } else {
-        println!("Oh no we missed it ahhhh!!");
+        ControlFlow::Break(Err(anyhow!("Oh no we missed it ahhhh!!")))
     }
-
-    ControlFlow::Break(Ok(()))
 }
 
 #[tokio::main(flavor = "current_thread")]
@@ -151,7 +148,10 @@ async fn main() {
 
         match attempt(&client, magic_number).await {
             ControlFlow::Continue(_) => continue,
-            ControlFlow::Break(Ok(())) => break,
+            ControlFlow::Break(Ok(())) => {
+                println!("We did it!");
+                break;
+            }
             ControlFlow::Break(Err(error)) => {
                 println!("Terminating with error: {error:?}");
                 break;

@@ -63,7 +63,10 @@ where
     }
 }
 
-async fn attempt(client: &reqwest::Client, magic_number: u64) -> ControlFlow<()> {
+async fn attempt(
+    client: &reqwest::Client,
+    magic_number: u64,
+) -> ControlFlow<Result<(), anyhow::Error>> {
     let response = client
         .get(API_URL)
         .query(&[("per_page", "1"), ("state", "all")])
@@ -87,7 +90,7 @@ async fn attempt(client: &reqwest::Client, magic_number: u64) -> ControlFlow<()>
     match magic_number.cmp(&(issue.number + 1)) {
         std::cmp::Ordering::Less => {
             println!("We didn't make it, I am sorry :<");
-            return ControlFlow::Break(());
+            return ControlFlow::Break(Ok(()));
         }
         std::cmp::Ordering::Equal => {}
         std::cmp::Ordering::Greater => {
@@ -99,7 +102,7 @@ async fn attempt(client: &reqwest::Client, magic_number: u64) -> ControlFlow<()>
         posted_issue
     } else {
         println!("We failed to post the issue, noooo");
-        return ControlFlow::Break(());
+        return ControlFlow::Break(Ok(()));
     };
 
     if posted_issue.number == magic_number {
@@ -108,7 +111,7 @@ async fn attempt(client: &reqwest::Client, magic_number: u64) -> ControlFlow<()>
         println!("Oh no we missed it ahhhh!!");
     }
 
-    ControlFlow::Break(())
+    ControlFlow::Break(Ok(()))
 }
 
 #[tokio::main(flavor = "current_thread")]

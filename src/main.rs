@@ -1,4 +1,4 @@
-use std::fmt::Display;
+use std::{fmt::Display, ops::ControlFlow};
 
 use reqwest::{
     header::{HeaderName, HeaderValue},
@@ -63,6 +63,54 @@ where
     }
 }
 
+async fn attempt(client: &reqwest::Client, magic_number: u64) -> ControlFlow<()> {
+    let response = client
+        .get(API_URL)
+        .query(&[("per_page", "1"), ("state", "all")])
+        .send()
+        .await;
+
+    let issues = if let Some(issues) = get_response_data::<Vec<Issue>>(response).await {
+        issues
+    } else {
+        return ControlFlow::Continue(());
+    };
+
+    let issue = match issues.get(0) {
+        None => {
+            println!("GitHub returned 0 issues for some reason ??");
+            return ControlFlow::Continue(());
+        }
+        Some(issue) => issue,
+    };
+
+    match magic_number.cmp(&(issue.number + 1)) {
+        std::cmp::Ordering::Less => {
+            println!("We didn't make it, I am sorry :<");
+            return ControlFlow::Break(());
+        }
+        std::cmp::Ordering::Equal => {}
+        std::cmp::Ordering::Greater => {
+            return ControlFlow::Continue(());
+        }
+    };
+
+    let posted_issue = if let Some(posted_issue) = send_request(client).await {
+        posted_issue
+    } else {
+        println!("We failed to post the issue, noooo");
+        return ControlFlow::Break(());
+    };
+
+    if posted_issue.number == magic_number {
+        println!("We did it!");
+    } else {
+        println!("Oh no we missed it ahhhh!!");
+    }
+
+    ControlFlow::Break(())
+}
+
 #[tokio::main(flavor = "current_thread")]
 async fn main() {
     let token = std::env::var("GITHUB_TOKEN").expect("GITHUB_TOKEN env variable missing");
@@ -98,54 +146,14 @@ async fn main() {
     loop {
         interval.tick().await;
 
-        let response = client
-            .get(API_URL)
-            .query(&[("per_page", "1"), ("state", "all")])
-            .send()
-            .await;
-
-        let issues = if let Some(issues) = get_response_data::<Vec<Issue>>(response).await {
-            issues
-        } else {
-            continue;
-        };
-
-        let issue = match issues.get(0) {
-            None => {
-                println!("GitHub returned 0 issues for some reason ??");
-                continue;
-            }
-            Some(issue) => issue,
-        };
-
-        match magic_number.cmp(&(issue.number + 1)) {
-            std::cmp::Ordering::Less => {
-                println!("We didn't make it, I am sorry :<");
-                break;
-            }
-            std::cmp::Ordering::Equal => {}
-            std::cmp::Ordering::Greater => {
-                continue;
-            }
-        };
-
-        let posted_issue = if let Some(posted_issue) = send_request(client).await {
-            posted_issue
-        } else {
-            println!("We failed to post the issue, noooo");
-            break;
-        };
-
-        if posted_issue.number == magic_number {
-            println!("We did it!");
-        } else {
-            println!("Oh no we missed it ahhhh!!");
+        match attempt(&client, magic_number).await {
+            ControlFlow::Continue(_) => continue,
+            ControlFlow::Break(_) => break,
         }
-        break;
     }
 }
 
-async fn send_request(client: reqwest::Client) -> Option<Issue> {
+async fn send_request(client: &reqwest::Client) -> Option<Issue> {
     let file = tokio::fs::read_to_string("assets/issue.md")
         .await
         .map_or_else(

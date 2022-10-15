@@ -67,7 +67,7 @@ where
 async fn attempt(
     client: &reqwest::Client,
     magic_number: u64,
-) -> ControlFlow<Result<(), anyhow::Error>> {
+) -> ControlFlow<Result<(), anyhow::Error>, Option<anyhow::Error>> {
     let response = client
         .get(API_URL)
         .query(&[("per_page", "1"), ("state", "all")])
@@ -77,13 +77,13 @@ async fn attempt(
     let issues = if let Some(issues) = get_response_data::<Vec<Issue>>(response).await {
         issues
     } else {
-        return ControlFlow::Continue(());
+        return ControlFlow::Continue(None);
     };
 
     let issue = match issues.get(0) {
         None => {
             println!("GitHub returned 0 issues for some reason ??");
-            return ControlFlow::Continue(());
+            return ControlFlow::Continue(None);
         }
         Some(issue) => issue,
     };
@@ -94,7 +94,7 @@ async fn attempt(
         }
         std::cmp::Ordering::Equal => {}
         std::cmp::Ordering::Greater => {
-            return ControlFlow::Continue(());
+            return ControlFlow::Continue(None);
         }
     };
 
@@ -147,7 +147,11 @@ async fn main() {
         interval.tick().await;
 
         match attempt(&client, magic_number).await {
-            ControlFlow::Continue(_) => continue,
+            ControlFlow::Continue(None) => continue,
+            ControlFlow::Continue(Some(error)) => {
+                println!("Encountered soft error: {error:?}");
+                continue;
+            }
             ControlFlow::Break(Ok(())) => {
                 println!("We did it!");
                 break;

@@ -151,7 +151,11 @@ async fn main() {
 
         match attempt(&client, magic_number).await {
             ControlFlow::Continue(_) => continue,
-            ControlFlow::Break(_) => break,
+            ControlFlow::Break(Ok(())) => break,
+            ControlFlow::Break(Err(error)) => {
+                println!("Terminating with error: {error:?}");
+                break;
+            }
         }
     }
 }

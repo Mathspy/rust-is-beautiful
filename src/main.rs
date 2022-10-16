@@ -1,6 +1,6 @@
 use std::{fmt::Display, ops::ControlFlow};
 
-use anyhow::anyhow;
+use anyhow::{anyhow, Context};
 use reqwest::{
     header::{HeaderName, HeaderValue},
     Response,
@@ -38,28 +38,24 @@ struct CreateIssue {
 // const API_URL: &str = "https://api.github.com/repos/Mathspy/rust-is-beautiful/issues";
 const API_URL: &str = "https://api.github.com/repos/rust-lang/rust/issues";
 
-async fn get_response_data<T>(response: reqwest::Result<Response>) -> Option<T>
+async fn get_response_data<T>(response: Response) -> anyhow::Result<T>
 where
     T: DeserializeOwned,
 {
     match response {
-        Ok(response) if response.status().is_success() => match response.json::<T>().await {
-            Ok(issues) => Some(issues),
-            Err(error) => {
-                println!("Unexpected error while decoding GitHub response {error}");
-                None
-            }
-        },
-        Ok(response) => {
-            match response.json::<GitHubError>().await {
-                Ok(error) => println!("{error}"),
-                Err(error) => println!("Unexpected error while decoding GitHub error {error}"),
-            };
-            None
+        response if response.status().is_success() => {
+            let issues = response
+                .json::<T>()
+                .await
+                .context("Unexpected error while decoding GitHub response")?;
+            Ok(issues)
         }
-        Err(error) => {
-            println!("Unexpected error while making request {error}");
-            None
+        response => {
+            let error = response
+                .json::<GitHubError>()
+                .await
+                .context("Unexpected error while decoding GitHub error")?;
+            Err(anyhow!("Error from GitHub: {error}"))
         }
     }
 }
@@ -72,18 +68,32 @@ async fn attempt(
         .get(API_URL)
         .query(&[("per_page", "1"), ("state", "all")])
         .send()
-        .await;
+        .await
+        .context("Unexpected error while making request");
 
-    let issues = if let Some(issues) = get_response_data::<Vec<Issue>>(response).await {
-        issues
-    } else {
-        return ControlFlow::Continue(None);
+    let response = match response {
+        Ok(response) => response,
+        Err(error) => {
+            return ControlFlow::Continue(Some(error));
+        }
+    };
+
+    let issues = get_response_data::<Vec<Issue>>(response)
+        .await
+        .context("Error while querying for latest issues");
+
+    let issues = match issues {
+        Ok(issues) => issues,
+        Err(error) => {
+            return ControlFlow::Continue(Some(error));
+        }
     };
 
     let issue = match issues.get(0) {
         None => {
-            println!("GitHub returned 0 issues for some reason ??");
-            return ControlFlow::Continue(None);
+            return ControlFlow::Continue(Some(anyhow!(
+                "GitHub returned 0 issues for some reason ??"
+            )));
         }
         Some(issue) => issue,
     };
@@ -98,10 +108,15 @@ async fn attempt(
         }
     };
 
-    let posted_issue = if let Some(posted_issue) = send_request(client).await {
-        posted_issue
-    } else {
-        return ControlFlow::Break(Err(anyhow!("We failed to post the issue, noooo")));
+    let posted_issue = send_request(client)
+        .await
+        .context("We failed to post the issue, noooo");
+
+    let posted_issue = match posted_issue {
+        Ok(posted_issue) => posted_issue,
+        Err(error) => {
+            return ControlFlow::Continue(Some(error));
+        }
     };
 
     if posted_issue.number == magic_number {
@@ -164,23 +179,22 @@ async fn main() {
     }
 }
 
-async fn send_request(client: &reqwest::Client) -> Option<Issue> {
+async fn send_request(client: &reqwest::Client) -> anyhow::Result<Issue> {
     let file = tokio::fs::read_to_string("assets/issue.md")
         .await
-        .map_or_else(
-            |err| {
-                println!("Failed to read issue.md file {err}");
-                None
-            },
-            |file| Some(file),
-        )?;
+        .context("Failed to read issue.md file")?;
 
     let issue = CreateIssue {
         title: "Rust is Beautiful",
         body: file,
     };
 
-    let response = client.post(API_URL).json(&issue).send().await;
+    let response = client
+        .post(API_URL)
+        .json(&issue)
+        .send()
+        .await
+        .context("Unexpected error while sending new issue request")?;
 
     get_response_data::<Issue>(response).await
 }

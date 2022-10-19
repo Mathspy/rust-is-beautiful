@@ -1,9 +1,3 @@
-# Name your project the same as the final binary's name
-# This needs to be updated for each project
-#
-# TODO: Get the project name from Cargo.toml while running instead of this mess
-ARG PROJECT_NAME=rust-is-beautiful
-
 # The default rust Docker container without any extra bells and whistles
 # It's going to be used only for building the application because it's
 # a full Debian OS which is overkill for running compiled Rust applications
@@ -15,6 +9,21 @@ FROM rust:1.64.0 AS build
 # comment this
 RUN apt update
 RUN apt-get install -y musl-tools
+
+# Install dasel to inspect the app's name because Cargo insists on building
+# binaries with the binary name specified in Cargo.toml and there's no way to
+# currently customize that behavior
+#
+# We install it into utils and verify that its checksum didn't change since
+# the creation of this script to prevent potential supply chain attacks
+RUN mkdir utils
+WORKDIR ./utils
+RUN curl -o dasel -L \
+  "https://github.com/TomWright/dasel/releases/download/v1.27.3/dasel_linux_amd64"
+RUN echo "1a5adbf8e5b69f48ad5d1665bf7ed056ea3ff8cf3312ce2dc7c3209939873489  dasel" \
+  | sha256sum --status --check
+RUN chmod +x dasel
+WORKDIR ../
 
 # Create a dummy project and build the app's dependencies.
 # If the Cargo.toml or Cargo.lock files have not changed,
@@ -35,17 +44,15 @@ COPY src ./src
 RUN touch src/main.rs
 RUN cargo build --target=x86_64-unknown-linux-musl --release
 
+# Rename project binary to app to simplify copying it in next stage
+RUN mv "target/x86_64-unknown-linux-musl/release/$(/utils/dasel select -f Cargo.toml .package.name)" \
+  target/x86_64-unknown-linux-musl/release/app
+
 # Establish an alphine container.
 # This is where we will actually run our code, we can use the scratch Docker
 # image if we wanted, but there are a couple of nice to have utilities inside
 # of alphine that are nice to have for debugging (like an actual shell lol)
 FROM alpine:latest
-
-# To continue having access to our argument PROJECT_NAME declared previously
-# we need to "redeclare it" here
-#
-# TODO: This will be unnecessary if we got rid of needing to specify the name
-ARG PROJECT_NAME
 
 # You can create ARG/ENV line pairs here for each environment var
 ARG GITHUB_TOKEN
@@ -55,7 +62,7 @@ ENV MAGIC_NUMBER=$MAGIC_NUMBER
 
 # Copy the statically-linked binary from the build image
 COPY --from=build \
-  /app/target/x86_64-unknown-linux-musl/release/$PROJECT_NAME \
+  /app/target/x86_64-unknown-linux-musl/release/app \
   /usr/local/bin/app
 
 # If your app relies on any external files at runtime, you should create an
